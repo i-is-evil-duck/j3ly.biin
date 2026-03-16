@@ -109,41 +109,6 @@ fn serveFile(conn: std.net.StreamServer.Connection, id: []const u8) !void {
         return send404(conn);
     }
 
-    const json_path = try std.fmt.allocPrint(allocator, "{s}/meta.json", .{fs.path.dirname(m.path).?});
-    defer allocator.free(json_path);
-    const json_file = fs.cwd().openFile(json_path, .{}) catch return serveFileDefault(conn, m);
-    defer json_file.close();
-    const json_stat = try json_file.stat();
-    const json_buf = try allocator.alloc(u8, json_stat.size);
-    defer allocator.free(json_buf);
-    _ = try json_file.readAll(json_buf);
-
-    const original_name = blk: {
-        if (std.mem.startsWith(u8, json_buf, "{\"name\":\"")) {
-            const start = json_buf[9 .. json_buf.len - 2];
-            break :blk try allocator.dupe(u8, start);
-        }
-        break :blk try allocator.dupe(u8, m.name);
-    };
-    defer allocator.free(original_name);
-
-    const file = fs.cwd().openFile(m.path, .{}) catch return send404(conn);
-    defer file.close();
-    const stat = try file.stat();
-
-    const header = try std.fmt.allocPrint(allocator, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"{s}\"\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ original_name, stat.size });
-    defer allocator.free(header);
-    try conn.stream.writeAll(header);
-
-    var buf: [8192]u8 = undefined;
-    while (true) {
-        const bytes = try file.read(&buf);
-        if (bytes == 0) break;
-        try conn.stream.writeAll(buf[0..bytes]);
-    }
-}
-
-fn serveFileDefault(conn: std.net.StreamServer.Connection, m: FileMeta) !void {
     const file = fs.cwd().openFile(m.path, .{}) catch return send404(conn);
     defer file.close();
     const stat = try file.stat();
@@ -227,18 +192,10 @@ fn handleUpload(conn: std.net.StreamServer.Connection, request: []const u8, body
     const id_copy = try allocator.dupe(u8, id);
     const path_copy = try allocator.dupe(u8, filepath);
 
-    const json_path = try std.fmt.allocPrint(allocator, "{s}/meta.json", .{folder_path});
-    defer allocator.free(json_path);
-    const json_file = try fs.cwd().createFile(json_path, .{});
-    defer json_file.close();
-    const json_content = try std.fmt.allocPrint(allocator, "{{\"name\":\"{s}\"}}", .{filename});
-    defer allocator.free(json_content);
-    try json_file.writeAll(json_content);
-
     mutex.lock();
     try files.put(id_copy, .{
         .path = path_copy,
-        .name = try std.fmt.allocPrint(allocator, "{s}.bin", .{id}),
+        .name = try allocator.dupe(u8, filename),
         .size = body_read,
         .expires = time.timestamp() + parseTtl(ttl),
     });
