@@ -92,6 +92,10 @@ fn getHeader(headers: []const u8, name: []const u8) ?[]const u8 {
     return null;
 }
 
+fn getHost(headers: []const u8) ?[]const u8 {
+    return getHeader(headers, "Host: ");
+}
+
 fn handleConnection(conn: std.net.StreamServer.Connection) !void {
     defer conn.stream.close();
     const client_ip = getIp(conn.address);
@@ -343,8 +347,23 @@ fn handleChunk(conn: std.net.StreamServer.Connection, headers: []const u8, reque
         std.log.info("File uploaded: {s} ({d} bytes)", .{ filename, total_size });
     }
 
+    const video_exts = &[_][]const u8{ ".mp4", ".mov", ".webm", ".avi", ".mkv" };
+
+    const is_video = for (video_exts) |ext| {
+        if (std.ascii.endsWithIgnoreCase(filename, ext)) break true;
+    } else false;
+
+    const embed_url = if (is_video) blk: {
+        const host = getHost(headers) orelse "localhost:8080";
+        break :blk try std.fmt.allocPrint(allocator, "https://stolen.shoes/embedVideo?video=https://{s}/s/{s}", .{ host, upload_id });
+    } else null;
+    defer if (embed_url) |u| allocator.free(u);
+
     const resp = if (chunk_idx == total_chunks - 1)
-        try std.fmt.allocPrint(allocator, "{{\"id\":\"{s}\",\"url\":\"/s/{s}\",\"name\":\"{s}\"}}", .{ upload_id, upload_id, filename })
+        if (embed_url) |eu|
+            try std.fmt.allocPrint(allocator, "{{\"id\":\"{s}\",\"url\":\"/s/{s}\",\"name\":\"{s}\",\"embed\":\"{s}\"}}", .{ upload_id, upload_id, filename, eu })
+        else
+            try std.fmt.allocPrint(allocator, "{{\"id\":\"{s}\",\"url\":\"/s/{s}\",\"name\":\"{s}\"}}", .{ upload_id, upload_id, filename })
     else
         try std.fmt.allocPrint(allocator, "{{\"ok\":true,\"chunk\":{d}}}", .{chunk_idx});
     defer allocator.free(resp);
